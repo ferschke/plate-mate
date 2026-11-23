@@ -79,13 +79,18 @@ export const USMap: React.FC<USMapProps> = ({ states, onToggleState }) => {
   const selectedRecord = selectedCode ? states[selectedCode] : undefined;
   const selectedSeen = Boolean(selectedRecord?.seen);
 
+  const handleStateTap = (code: string) => {
+    setSelectedCode(code);
+    onToggleState(code);
+  };
+
   return (
     <div className="map-view">
       <div className="map-card">
         <div className="map-card-header">
           <div>
             <h2 className="section-title">United States Map</h2>
-            <p className="section-subtitle">Tap any state to preview its plate or mark it spotted</p>
+            <p className="section-subtitle">Tap any state to toggle spotted or unseen</p>
           </div>
           <div className="map-legend">
             <span className="legend-item">
@@ -115,10 +120,10 @@ export const USMap: React.FC<USMapProps> = ({ states, onToggleState }) => {
                     key={state.code}
                     d={d}
                     className={`map-state-path ${isSeen ? 'is-seen' : ''} ${isSelected ? 'is-selected' : ''}`}
-                    onClick={() => setSelectedCode(state.code)}
+                    onClick={() => handleStateTap(state.code)}
                   >
                     <title>
-                      {state.name} — {isSeen ? 'Spotted' : 'Not yet seen'}
+                      {state.name} — {isSeen ? 'Spotted (tap to unmark)' : 'Unseen (tap to mark spotted)'}
                     </title>
                   </path>
                 );
@@ -160,8 +165,8 @@ export const USMap: React.FC<USMapProps> = ({ states, onToggleState }) => {
                   key={code}
                   type="button"
                   className={`mini-state-chip ${isSeen ? 'is-seen' : ''} ${isSelected ? 'is-selected' : ''}`}
-                  onClick={() => setSelectedCode(code)}
-                  title={st.name}
+                  onClick={() => handleStateTap(code)}
+                  title={`${st.name} — ${isSeen ? 'Spotted (tap to unmark)' : 'Unseen (tap to mark spotted)'}`}
                 >
                   {code}
                 </button>
