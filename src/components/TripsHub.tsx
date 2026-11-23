@@ -101,7 +101,7 @@ export const TripsHub: React.FC<TripsHubProps> = ({
         </div>
         <h1 className="hub-title">Spot every state on the open road.</h1>
         <p className="hub-subtitle">
-          Track authentic US license plates as you drive, watch your map fill in, and play live with everyone in the car.
+          Turn every highway into a live multiplayer hunt—spot license plates from all fifty US states and watch your map light up.
         </p>
 
         {trips.length > 0 && (
