@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { Check, Copy, Radio, Share2, Users, Wifi, WifiOff, X } from 'lucide-react';
 import { buildShareUrl } from '../services/sync';
@@ -9,7 +9,7 @@ interface ShareModalProps {
   playerName: string;
   syncStatus: SyncStatus;
   onlinePeers: OnlinePeer[];
-  onEnableMultiplayer: () => void;
+  onEnableMultiplayer: (nickname?: string) => void;
   onUpdatePlayerName: (name: string) => void;
   onClose: () => void;
 }
@@ -27,6 +27,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [nameInput, setNameInput] = useState(playerName);
+  const [nameHint, setNameHint] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   const shareUrl = trip.roomCode ? buildShareUrl(trip.roomCode, trip.name) : '';
 
@@ -87,7 +89,25 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   const handleSaveName = (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdatePlayerName(nameInput.trim() || 'Road Tripper');
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      setNameHint(true);
+      nameInputRef.current?.focus();
+      return;
+    }
+    setNameHint(false);
+    onUpdatePlayerName(trimmed);
+  };
+
+  const handleStartShared = () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      setNameHint(true);
+      nameInputRef.current?.focus();
+      return;
+    }
+    setNameHint(false);
+    onEnableMultiplayer(trimmed);
   };
 
   return (
@@ -105,22 +125,29 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
         <form className="nickname-row" onSubmit={handleSaveName}>
           <label htmlFor="player-nickname-input" className="field-label">
-            Your Name (shown when you spot a plate)
+            Your Nickname (saved for future trips)
           </label>
           <div className="input-with-btn">
             <input
+              ref={nameInputRef}
               id="player-nickname-input"
               type="text"
               className="text-input"
               value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
+              onChange={(e) => {
+                setNameInput(e.target.value);
+                if (nameHint && e.target.value.trim()) setNameHint(false);
+              }}
               placeholder="e.g. Alex, Driver, Backseat"
               maxLength={24}
             />
-            <button type="submit" className="btn btn-secondary btn-sm">
+            <button type="submit" className="btn btn-secondary btn-sm" disabled={!nameInput.trim()}>
               Save
             </button>
           </div>
+          {nameHint && (
+            <p className="inline-hint">Please enter a nickname so everyone in the car knows who spotted each plate.</p>
+          )}
         </form>
 
         {!trip.roomCode ? (
@@ -137,7 +164,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               type="button"
               id="enable-multiplayer-btn"
               className="btn btn-primary btn-full"
-              onClick={onEnableMultiplayer}
+              onClick={handleStartShared}
             >
               <Radio size={17} /> Start Shared Session
             </button>

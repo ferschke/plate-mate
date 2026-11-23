@@ -58,16 +58,19 @@ export const TripsHub: React.FC<TripsHubProps> = ({
 
   const handleStartSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedName = nameDraft.trim();
+    if (startShared && !trimmedName) return;
     const defaultName = `Road Trip ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
-    onCreateTrip(newTripName.trim() || defaultName, startShared, nameDraft.trim() || 'Road Tripper');
+    onCreateTrip(newTripName.trim() || defaultName, startShared, trimmedName);
     setNewTripName('');
   };
 
   const handleJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = normalizeRoomCode(joinCode);
-    if (clean.length < 4) return;
-    onJoinTrip(clean, `Shared Trip ${clean}`, joinName.trim() || 'Road Tripper');
+    const trimmedName = joinName.trim();
+    if (clean.length < 4 || !trimmedName) return;
+    onJoinTrip(clean, `Shared Trip ${clean}`, trimmedName);
     setJoinCode('');
     setShowJoinForm(false);
   };
@@ -145,7 +148,7 @@ export const TripsHub: React.FC<TripsHubProps> = ({
 
           <div className="form-group">
             <label htmlFor="creator-name" className="field-label">
-              Your Nickname
+              Your Nickname {startShared ? '(Required for Multiplayer)' : '(Optional)'}
             </label>
             <input
               id="creator-name"
@@ -155,6 +158,7 @@ export const TripsHub: React.FC<TripsHubProps> = ({
               value={nameDraft}
               onChange={(e) => setNameDraft(e.target.value)}
               maxLength={24}
+              required={startShared}
             />
           </div>
 
@@ -171,7 +175,12 @@ export const TripsHub: React.FC<TripsHubProps> = ({
             </span>
           </label>
 
-          <button type="submit" id="start-new-trip-btn" className="btn btn-primary btn-full">
+          <button
+            type="submit"
+            id="start-new-trip-btn"
+            className="btn btn-primary btn-full"
+            disabled={startShared && !nameDraft.trim()}
+          >
             <Plus size={18} /> Start Trip
           </button>
         </form>
@@ -224,10 +233,16 @@ export const TripsHub: React.FC<TripsHubProps> = ({
                   value={joinName}
                   onChange={(e) => setJoinName(e.target.value)}
                   maxLength={24}
+                  required
                 />
               </div>
               <div className="button-row">
-                <button type="submit" id="confirm-join-trip-btn" className="btn btn-primary" disabled={joinCode.length < 4}>
+                <button
+                  type="submit"
+                  id="confirm-join-trip-btn"
+                  className="btn btn-primary"
+                  disabled={joinCode.length < 4 || !joinName.trim()}
+                >
                   Join Live Trip
                 </button>
                 <button type="button" className="btn btn-ghost" onClick={() => setShowJoinForm(false)}>

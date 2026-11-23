@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { LicensePlate } from './components/LicensePlate';
+import { NicknamePromptModal } from './components/NicknamePromptModal';
 import { ShareModal } from './components/ShareModal';
 import { TripsHub } from './components/TripsHub';
 import { TripStats } from './components/TripStats';
@@ -42,14 +43,24 @@ interface ToastMessage {
   undoCode?: string;
 }
 
-function loadInitialAppState(): PersistedState {
+interface PendingJoin {
+  roomCode: string;
+  tripName: string;
+}
+
+interface InitialBootState {
+  persisted: PersistedState;
+  pendingJoin: PendingJoin | null;
+}
+
+function loadInitialBootState(): InitialBootState {
   const loaded = loadPersistedState();
   const params = new URLSearchParams(window.location.search);
   const rawJoin = params.get('join');
-  if (!rawJoin) return loaded;
+  if (!rawJoin) return { persisted: loaded, pendingJoin: null };
 
   const code = normalizeRoomCode(rawJoin);
-  if (code.length < 4) return loaded;
+  if (code.length < 4) return { persisted: loaded, pendingJoin: null };
 
   const incomingTripName = params.get('trip')?.trim() || `Shared Trip ${code}`;
   const cleanUrl = new URL(window.location.href);
@@ -57,24 +68,41 @@ function loadInitialAppState(): PersistedState {
   cleanUrl.searchParams.delete('trip');
   window.history.replaceState({}, '', cleanUrl.toString());
 
+  // If the player hasn't chosen a nickname yet, ask them before entering the shared trip
+  const savedName = loaded.settings.playerName.trim();
+  if (!savedName) {
+    return {
+      persisted: loaded,
+      pendingJoin: { roomCode: code, tripName: incomingTripName },
+    };
+  }
+
   const existing = loaded.trips.find((t) => t.roomCode === code);
   if (existing) {
-    return { ...loaded, activeTripId: existing.id };
+    return {
+      persisted: { ...loaded, activeTripId: existing.id },
+      pendingJoin: null,
+    };
   }
 
   const joined = createNewTrip(incomingTripName, {
     roomCode: code,
-    creatorName: loaded.settings.playerName || 'Road Tripper',
+    creatorName: savedName,
   });
   return {
-    ...loaded,
-    trips: [joined, ...loaded.trips],
-    activeTripId: joined.id,
+    persisted: {
+      ...loaded,
+      trips: [joined, ...loaded.trips],
+      activeTripId: joined.id,
+    },
+    pendingJoin: null,
   };
 }
 
 export function App() {
-  const [appState, setAppState] = useState<PersistedState>(() => loadInitialAppState());
+  const [initialBoot] = useState<InitialBootState>(() => loadInitialBootState());
+  const [appState, setAppState] = useState<PersistedState>(() => initialBoot.persisted);
+  const [pendingJoin, setPendingJoin] = useState<PendingJoin | null>(() => initialBoot.pendingJoin);
   const [activeTab, setActiveTab] = useState<ActiveTab>('plates');
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<PlateFilter>('all');
@@ -222,13 +250,17 @@ export function App() {
   };
 
   const handleCreateTrip = (name: string, shared: boolean, playerName: string) => {
+    const cleanName = playerName.trim();
     const roomCode = shared ? generateRoomCode() : undefined;
-    const trip = createNewTrip(name, { roomCode, creatorName: playerName });
+    const trip = createNewTrip(name, { roomCode, creatorName: cleanName || undefined });
     setAppState((prev) => ({
       ...prev,
       trips: [trip, ...prev.trips],
       activeTripId: trip.id,
-      settings: { ...prev.settings, playerName },
+      settings: {
+        ...prev.settings,
+        playerName: cleanName || prev.settings.playerName,
+      },
     }));
     setActiveTab('plates');
     setSearchQuery('');
@@ -240,25 +272,34 @@ export function App() {
 
   const handleJoinTrip = (roomCode: string, tripName: string, playerName: string) => {
     const clean = normalizeRoomCode(roomCode);
+    const cleanName = playerName.trim();
     setAppState((prev) => {
+      const effectiveName = cleanName || prev.settings.playerName;
       const existing = prev.trips.find((t) => t.roomCode === clean);
       if (existing) {
         return {
           ...prev,
           activeTripId: existing.id,
-          settings: { ...prev.settings, playerName },
+          settings: { ...prev.settings, playerName: effectiveName },
         };
       }
-      const trip = createNewTrip(tripName, { roomCode: clean, creatorName: playerName });
+      const trip = createNewTrip(tripName, { roomCode: clean, creatorName: effectiveName || undefined });
       return {
         ...prev,
         trips: [trip, ...prev.trips],
         activeTripId: trip.id,
-        settings: { ...prev.settings, playerName },
+        settings: { ...prev.settings, playerName: effectiveName },
       };
     });
     setActiveTab('plates');
     showToast(`Connecting to shared trip ${clean}…`);
+  };
+
+  const handleConfirmPendingJoin = (nickname: string) => {
+    if (!pendingJoin) return;
+    const { roomCode, tripName } = pendingJoin;
+    setPendingJoin(null);
+    handleJoinTrip(roomCode, tripName, nickname);
   };
 
   const handleSelectTrip = (tripId: string) => {
@@ -285,11 +326,16 @@ export function App() {
     }));
   };
 
-  const handleEnableMultiplayer = () => {
+  const handleEnableMultiplayer = (nickname?: string) => {
     if (!activeTrip || activeTrip.roomCode) return;
+    const cleanName = nickname?.trim();
     const roomCode = generateRoomCode();
     setAppState((prev) => ({
       ...prev,
+      settings: {
+        ...prev.settings,
+        playerName: cleanName || prev.settings.playerName,
+      },
       trips: prev.trips.map((t) =>
         t.id === activeTrip.id ? { ...t, roomCode, updatedAt: Date.now() } : t,
       ),
@@ -663,6 +709,16 @@ export function App() {
             <span>Stats</span>
           </button>
         </nav>
+      )}
+
+      {/* Nickname Prompt for New Players Joining via Invite Link / QR */}
+      {pendingJoin && (
+        <NicknamePromptModal
+          tripName={pendingJoin.tripName}
+          roomCode={pendingJoin.roomCode}
+          onConfirm={handleConfirmPendingJoin}
+          onCancel={() => setPendingJoin(null)}
+        />
       )}
 
       {/* Share / Multiplayer Modal */}
