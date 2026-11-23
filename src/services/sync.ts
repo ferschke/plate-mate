@@ -18,6 +18,12 @@ interface PresencePayload {
   sentAt: number;
 }
 
+interface SyncRequestPayload {
+  type: 'sync-req';
+  senderId: string;
+  sentAt: number;
+}
+
 const BROKERS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt',
@@ -33,8 +39,9 @@ export interface TripSyncCallbacks {
 
 /**
  * Serverless real-time multiplayer trip synchronization using MQTT over WSS.
- * Works across cellular NATs on mobile phones and uses retained messages so
- * late joiners and phones emerging from highway dead zones sync automatically.
+ * Works across cellular NATs on mobile phones and uses retained messages plus
+ * explicit sync requests so new joiners and phones emerging from dead zones
+ * receive the full trip state immediately.
  */
 export class TripSyncClient {
   private client: MqttClient | null = null;
@@ -45,6 +52,7 @@ export class TripSyncClient {
   private peers: Map<string, OnlinePeer> = new Map();
   private heartbeatTimer: number | null = null;
   private pruneTimer: number | null = null;
+  private initialRetainTimer: number | null = null;
   private brokerIndex = 0;
   private destroyed = false;
   private latestSnapshot: { tripName: string; states: Record<string, SpottedRecord> } | null = null;
@@ -62,6 +70,10 @@ export class TripSyncClient {
 
   private get deltaTopic(): string {
     return `${TOPIC_PREFIX}/${this.roomCode}/delta`;
+  }
+
+  private get syncReqTopic(): string {
+    return `${TOPIC_PREFIX}/${this.roomCode}/sync-req`;
   }
 
   private get presenceTopic(): string {
@@ -108,13 +120,31 @@ export class TripSyncClient {
     client.on('connect', () => {
       if (this.destroyed) return;
       this.callbacks.onStatusChange('connected');
-      client.subscribe([this.stateTopic, this.deltaTopic, this.presenceWildcard], { qos: 0 });
-      this.publishPresence(true);
+      client.subscribe(
+        [this.stateTopic, this.deltaTopic, this.syncReqTopic, this.presenceWildcard],
+        { qos: 0 },
+        () => {
+          if (this.destroyed || !client.connected) return;
+          this.publishPresence(true);
+          this.publishSyncRequest();
+
+          // If we already have local states (e.g. host turning on multiplayer or offline edits),
+          // broadcast a live delta immediately and persist retained state shortly after any
+          // broker-retained state has had a chance to merge.
+          if (this.latestSnapshot && Object.keys(this.latestSnapshot.states).length > 0) {
+            this.publishDelta(this.latestSnapshot.tripName, this.latestSnapshot.states);
+            if (this.initialRetainTimer !== null) {
+              clearTimeout(this.initialRetainTimer);
+            }
+            this.initialRetainTimer = window.setTimeout(() => {
+              if (!this.destroyed && this.client?.connected && this.latestSnapshot) {
+                this.publishState(this.latestSnapshot.tripName, this.latestSnapshot.states);
+              }
+            }, 600);
+          }
+        },
+      );
       this.startTimers();
-      // If we have local state already (e.g., creator or offline edits), broadcast a delta so peers merge it
-      if (this.latestSnapshot && Object.keys(this.latestSnapshot.states).length > 0) {
-        this.publishDelta(this.latestSnapshot.tripName, this.latestSnapshot.states);
-      }
     });
 
     client.on('reconnect', () => {
@@ -129,7 +159,6 @@ export class TripSyncClient {
 
     client.on('error', () => {
       if (this.destroyed) return;
-      // Try next fallback broker if initial connect fails
       if (!client.connected && this.brokerIndex < BROKERS.length - 1) {
         this.brokerIndex += 1;
         client.end(true);
@@ -147,6 +176,20 @@ export class TripSyncClient {
           const payload = data as SyncPayload;
           if (payload.type === 'state' && payload.senderId !== this.clientId) {
             this.callbacks.onRemoteState(payload);
+          }
+        } else if (topic === this.syncReqTopic) {
+          const req = data as SyncRequestPayload;
+          if (req.type === 'sync-req' && req.senderId !== this.clientId) {
+            // A newly joined or reconnected peer is requesting the current game state
+            if (this.latestSnapshot) {
+              const hasStates = Object.keys(this.latestSnapshot.states).length > 0;
+              const hasRealName = !this.latestSnapshot.tripName.startsWith('Shared Trip ');
+              if (hasStates || hasRealName) {
+                this.publishState(this.latestSnapshot.tripName, this.latestSnapshot.states);
+              }
+            }
+            // Also reply with our presence so the new peer immediately sees us online
+            this.publishPresence(true);
           }
         } else if (topic.startsWith(`${TOPIC_PREFIX}/${this.roomCode}/presence/`)) {
           const presence = data as PresencePayload;
@@ -166,6 +209,10 @@ export class TripSyncClient {
         // Ignore malformed packets
       }
     });
+  }
+
+  public setSnapshot(tripName: string, states: Record<string, SpottedRecord>): void {
+    this.latestSnapshot = { tripName, states };
   }
 
   public updatePlayerName(name: string): void {
@@ -208,6 +255,16 @@ export class TripSyncClient {
     this.client.publish(this.deltaTopic, JSON.stringify(payload), { qos: 0, retain: false });
   }
 
+  private publishSyncRequest(): void {
+    if (!this.client?.connected) return;
+    const payload: SyncRequestPayload = {
+      type: 'sync-req',
+      senderId: this.clientId,
+      sentAt: Date.now(),
+    };
+    this.client.publish(this.syncReqTopic, JSON.stringify(payload), { qos: 0, retain: false });
+  }
+
   private publishPresence(online: boolean): void {
     if (!this.client?.connected) return;
     const payload: PresencePayload = {
@@ -246,6 +303,10 @@ export class TripSyncClient {
     if (this.pruneTimer !== null) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
+    }
+    if (this.initialRetainTimer !== null) {
+      clearTimeout(this.initialRetainTimer);
+      this.initialRetainTimer = null;
     }
   }
 

@@ -150,6 +150,9 @@ export function App() {
   useEffect(() => {
     activeTripRef.current = activeTrip;
     playerNameRef.current = appState.settings.playerName || 'Road Tripper';
+    if (activeTrip && syncClientRef.current) {
+      syncClientRef.current.setSnapshot(activeTrip.name, activeTrip.states);
+    }
   }, [activeTrip, appState.settings.playerName]);
 
   // Manage real-time MQTT multiplayer sync when activeTrip has a roomCode
@@ -175,16 +178,19 @@ export function App() {
             const current = prev.trips[idx];
             const { merged, changed } = mergeStateRecords(current.states, payload.states);
 
-            // Detect if a newly seen state came from a remote mate for a nice toast
+            // Detect newly seen states from remote peers for toast feedback
             if (changed) {
-              const newlySeen = Object.entries(payload.states).find(
+              const newlySeenList = Object.entries(payload.states).filter(
                 ([code, rec]) => rec.seen && !current.states[code]?.seen && merged[code]?.seen,
               );
-              if (newlySeen) {
-                const st = STATE_BY_CODE[newlySeen[0]];
+              if (newlySeenList.length === 1) {
+                const [code, rec] = newlySeenList[0];
+                const st = STATE_BY_CODE[code];
                 if (st) {
-                  showToast(`${newlySeen[1].spottedBy || payload.senderName} spotted ${st.name}!`);
+                  showToast(`${rec.spottedBy || payload.senderName} spotted ${st.name}!`);
                 }
+              } else if (newlySeenList.length > 1) {
+                showToast(`Synced ${newlySeenList.length} spotted states!`);
               }
             }
 
@@ -201,6 +207,8 @@ export function App() {
               states: merged,
               updatedAt: Date.now(),
             };
+            client.setSnapshot(updatedTrip.name, updatedTrip.states);
+
             const nextTrips = [...prev.trips];
             nextTrips[idx] = updatedTrip;
             return { ...prev, trips: nextTrips };
